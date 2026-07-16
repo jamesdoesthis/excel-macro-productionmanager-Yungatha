@@ -1,0 +1,691 @@
+Sub FormatTasksBoard()
+    '=========================================================
+    ' Yungatha Pty Ltd - Monday.com Tasks Board Formatter
+    ' Run this macro every time you export the Tasks Board
+    ' from Monday.com to reformat it to the clean layout.
+    '=========================================================
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim lastCol As Long
+    Dim i As Long
+    Dim jNumCol As Long
+    Dim nameCol As Long
+    Dim textCol As Long
+    Dim printedCol As Long
+    Dim dayCol As Long
+    Dim headerRow As Long
+
+    Set ws = ActiveSheet
+
+    ' -------------------------------------------------------
+    ' STEP 1: Find header row (row with "J Num" or "Job#")
+    ' -------------------------------------------------------
+    headerRow = 0
+    Dim r As Long
+    For r = 1 To 10
+        Dim c As Long
+        For c = 1 To 20
+            If InStr(LCase(CStr(ws.Cells(r, c).Value)), "j num") > 0 Or _
+               InStr(LCase(CStr(ws.Cells(r, c).Value)), "job#") > 0 Or _
+               InStr(LCase(CStr(ws.Cells(r, c).Value)), "job #") > 0 Then
+                headerRow = r
+                Exit For
+            End If
+        Next c
+        If headerRow > 0 Then Exit For
+    Next r
+
+    If headerRow = 0 Then
+        MsgBox "Could not find the header row. Make sure the sheet has a 'J Num' or 'Job#' column.", vbExclamation
+        Exit Sub
+    End If
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+
+    ' -------------------------------------------------------
+    ' STEP 2: Find column positions by header name
+    ' -------------------------------------------------------
+    jNumCol = 0
+    nameCol = 0
+    textCol = 0
+    printedCol = 0
+    dayCol = 0
+
+    Dim excelStatusCol As Long
+    excelStatusCol = 0
+    Dim dueDateCol As Long
+    dueDateCol = 0
+
+    For c = 1 To lastCol
+        Dim hVal As String
+        hVal = LCase(Trim(CStr(ws.Cells(headerRow, c).Value)))
+        Select Case hVal
+            Case "j num", "job#", "job #"
+                jNumCol = c
+            Case "name"
+                nameCol = c
+            Case "text"
+                textCol = c
+            Case "printed"
+                printedCol = c
+            Case "day"
+                dayCol = c
+            Case "excel status"
+                excelStatusCol = c
+            Case "due date"
+                dueDateCol = c
+        End Select
+    Next c
+
+    ' -------------------------------------------------------
+    ' STEP 2b: Capture "SideQuests" rows AND real Due Dates
+    '          BEFORE those columns get deleted.
+    '          Stored by OFFSET (row - headerRow), not by raw
+    '          row number, because rows above the header get
+    '          deleted later (Step 9) which shifts every row up.
+    '          The offset stays correct through that shift.
+    ' -------------------------------------------------------
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    Dim maxOffset As Long
+    maxOffset = lastRow - headerRow
+    Dim isSideQuest() As Boolean
+    ReDim isSideQuest(1 To maxOffset)
+    Dim dueDateVal() As Variant
+    ReDim dueDateVal(1 To maxOffset)
+    If excelStatusCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            If LCase(Trim(CStr(ws.Cells(i, excelStatusCol).Value))) = "sidequests" Then
+                isSideQuest(i - headerRow) = True
+            End If
+        Next i
+    End If
+    If dueDateCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            If IsDate(ws.Cells(i, dueDateCol).Value) Then
+                dueDateVal(i - headerRow) = CDate(ws.Cells(i, dueDateCol).Value)
+            End If
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 3: Delete unwanted columns (keep only Job#, Name, Text, Printed, Day)
+    ' -------------------------------------------------------
+    Dim keepCols(1 To 5) As Long
+    keepCols(1) = jNumCol
+    keepCols(2) = nameCol
+    keepCols(3) = textCol
+    keepCols(4) = printedCol
+    keepCols(5) = dayCol
+
+    For c = lastCol To 1 Step -1
+        Dim shouldKeep As Boolean
+        shouldKeep = False
+        Dim k As Integer
+        For k = 1 To 5
+            If keepCols(k) = c Then
+                shouldKeep = True
+                Exit For
+            End If
+        Next k
+        If Not shouldKeep Then
+            ws.Columns(c).Delete
+        End If
+    Next c
+
+    ' -------------------------------------------------------
+    ' STEP 4: Re-find columns after deletions
+    ' -------------------------------------------------------
+    jNumCol = 0
+    nameCol = 0
+    textCol = 0
+    printedCol = 0
+    dayCol = 0
+
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    For c = 1 To lastCol
+        hVal = LCase(Trim(CStr(ws.Cells(headerRow, c).Value)))
+        Select Case hVal
+            Case "j num", "job#", "job #"
+                jNumCol = c
+            Case "name"
+                nameCol = c
+            Case "text"
+                textCol = c
+            Case "printed"
+                printedCol = c
+            Case "day"
+                dayCol = c
+        End Select
+    Next c
+
+    ' -------------------------------------------------------
+    ' STEP 4b: Restore "SideQuests" tag into the Printed column
+    '          for rows that had it in Excel Status (only if
+    '          Printed is currently blank for that row).
+    ' -------------------------------------------------------
+    If printedCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            If (i - headerRow) <= UBound(isSideQuest) Then
+                If isSideQuest(i - headerRow) And Trim(CStr(ws.Cells(i, printedCol).Value)) = "" Then
+                    ws.Cells(i, printedCol).Value = "SideQuests"
+                End If
+            End If
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 5: Rename "J Num" header to "Job#"
+    ' -------------------------------------------------------
+    If jNumCol > 0 Then
+        ws.Cells(headerRow, jNumCol).Value = "Job#"
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 6: Move Job# column to be BEFORE Name column
+    ' -------------------------------------------------------
+    If jNumCol > 0 And nameCol > 0 Then
+        If jNumCol > nameCol Then
+            ws.Columns(jNumCol).Cut
+            ws.Columns(nameCol).Insert Shift:=xlToRight
+            jNumCol = 0
+            nameCol = 0
+            textCol = 0
+            printedCol = 0
+            dayCol = 0
+            lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+            For c = 1 To lastCol
+                hVal = LCase(Trim(CStr(ws.Cells(headerRow, c).Value)))
+                Select Case hVal
+                    Case "job#"
+                        jNumCol = c
+                    Case "name"
+                        nameCol = c
+                    Case "text"
+                        textCol = c
+                    Case "printed"
+                        printedCol = c
+                    Case "day"
+                        dayCol = c
+                End Select
+            Next c
+        End If
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 7: Clean Job# values - strip leading "J", leading zeros
+    '         e.g. "J16477" -> 16477,  "00016479" -> 16479
+    ' -------------------------------------------------------
+    If jNumCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            Dim cellVal As String
+            cellVal = Trim(CStr(ws.Cells(i, jNumCol).Value))
+            If cellVal <> "" And LCase(cellVal) <> "null" Then
+                ' Strip leading "J" or "j"
+                If Left(UCase(cellVal), 1) = "J" Then
+                    cellVal = Mid(cellVal, 2)
+                End If
+                ' Strip leading zeros
+                Do While Left(cellVal, 1) = "0" And Len(cellVal) > 1
+                    cellVal = Mid(cellVal, 2)
+                Loop
+                ' Store as number if possible, else as cleaned string
+                If IsNumeric(cellVal) Then
+                    ws.Cells(i, jNumCol).Value = CLng(cellVal)
+                    ws.Cells(i, jNumCol).NumberFormat = "0"
+                Else
+                    ws.Cells(i, jNumCol).Value = cellVal
+                End If
+            End If
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 8: Convert Day column to shorthand (Mon, Tue, etc.)
+    ' -------------------------------------------------------
+    If dayCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            Dim dayVal As String
+            dayVal = Trim(CStr(ws.Cells(i, dayCol).Value))
+            Select Case LCase(dayVal)
+                Case "monday"
+                    ws.Cells(i, dayCol).Value = "Mon"
+                Case "tuesday"
+                    ws.Cells(i, dayCol).Value = "Tue"
+                Case "wednesday"
+                    ws.Cells(i, dayCol).Value = "Wed"
+                Case "thursday"
+                    ws.Cells(i, dayCol).Value = "Thu"
+                Case "friday"
+                    ws.Cells(i, dayCol).Value = "Fri"
+                Case "saturday"
+                    ws.Cells(i, dayCol).Value = "Sat"
+                Case "sunday"
+                    ws.Cells(i, dayCol).Value = "Sun"
+            End Select
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 9: Tidy up the rows above the header.
+    '          - Find the date-reference row (e.g. "Friday 3rd
+    '            July") among the rows above the header.
+    '          - Wipe EVERYTHING above the header (title text,
+    '            "Try it free" hyperlink, stray fills, etc.)
+    '          - Put the date text back on its own row, bold,
+    '            size 16, merged across the Job#/Name columns -
+    '            leaving a blank spacer row above it, just like
+    '            the reference layout.
+    '          - If no date row is found, everything above the
+    '            header is simply left blank.
+    ' -------------------------------------------------------
+    If headerRow > 1 Then
+        Dim dateRefRow As Long
+        Dim dateRefCol As Long
+        dateRefRow = 0
+        dateRefCol = 0
+        Dim weekdays As Variant
+        weekdays = Array("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+        Dim rr As Long
+        For rr = 1 To headerRow - 1
+            Dim colScan As Long
+            For colScan = 1 To 5
+                Dim rowText As String
+                rowText = LCase(Trim(CStr(ws.Cells(rr, colScan).Value)))
+                Dim wdItem As Variant
+                For Each wdItem In weekdays
+                    ' Must START WITH the weekday name (e.g. "friday 3rd july")
+                    ' - NOT just contain it anywhere, otherwise text like
+                    ' "...using monday.com" would wrongly match "monday".
+                    If Left(rowText, Len(CStr(wdItem))) = CStr(wdItem) Then
+                        dateRefRow = rr
+                        dateRefCol = colScan
+                        Exit For
+                    End If
+                Next wdItem
+                If dateRefRow > 0 Then Exit For
+            Next colScan
+            If dateRefRow > 0 Then Exit For
+        Next rr
+
+        Dim dateText As String
+        dateText = ""
+        If dateRefRow > 0 Then
+            dateText = Trim(CStr(ws.Cells(dateRefRow, dateRefCol).Value))
+        End If
+
+        ' Wipe every row above the header - values, fills, hyperlinks
+        Dim clutterRange As Range
+        Set clutterRange = ws.Range(ws.Cells(1, 1), ws.Cells(headerRow - 1, lastCol))
+        clutterRange.Hyperlinks.Delete
+        clutterRange.ClearContents
+        clutterRange.Interior.ColorIndex = xlNone
+        clutterRange.Font.Bold = False
+        clutterRange.Font.Size = 11
+        clutterRange.Font.ColorIndex = xlAutomatic
+
+        ' Restore just the date, styled and merged (leaves row(s)
+        ' above it blank as a spacer, matching the reference sheet)
+        If dateRefRow > 0 And dateText <> "" Then
+            With ws.Cells(dateRefRow, 1)
+                .Value = dateText
+                .Font.Bold = True
+                .Font.Size = 16
+                .Font.Color = RGB(87, 155, 252)
+            End With
+            If lastCol >= 2 Then
+                ws.Range(ws.Cells(dateRefRow, 1), ws.Cells(dateRefRow, 2)).Merge
+            End If
+        End If
+
+        lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 10: Remove fully empty or "null" rows
+    ' -------------------------------------------------------
+    For i = lastRow To headerRow + 1 Step -1
+        Dim rowEmpty As Boolean
+        rowEmpty = True
+        For c = 1 To lastCol
+            Dim cv As String
+            cv = Trim(CStr(ws.Cells(i, c).Value))
+            If cv <> "" And LCase(cv) <> "null" Then
+                rowEmpty = False
+                Exit For
+            End If
+        Next c
+        If rowEmpty Then ws.Rows(i).Delete
+    Next i
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+
+    ' -------------------------------------------------------
+    ' STEP 11: Apply alignment
+    ' -------------------------------------------------------
+    lastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+    For c = 1 To lastCol
+        If c = textCol Or c = nameCol Then
+            ws.Columns(c).HorizontalAlignment = xlLeft
+        Else
+            ws.Columns(c).HorizontalAlignment = xlCenter
+        End If
+    Next c
+
+    ' -------------------------------------------------------
+    ' STEP 12: Set column widths
+    ' -------------------------------------------------------
+    If jNumCol > 0 Then ws.Columns(jNumCol).ColumnWidth = 8
+    If nameCol > 0 Then ws.Columns(nameCol).ColumnWidth = 22
+    If printedCol > 0 Then ws.Columns(printedCol).ColumnWidth = 12
+    If dayCol > 0 Then ws.Columns(dayCol).ColumnWidth = 7
+    If textCol > 0 Then
+        ws.Columns(textCol).AutoFit
+        If ws.Columns(textCol).ColumnWidth < 60 Then
+            ws.Columns(textCol).ColumnWidth = 60
+        End If
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 13: (Borders applied at end - see STEP 17b)
+    ' -------------------------------------------------------
+
+    ' -------------------------------------------------------
+    ' STEP 14: Style the header row
+    ' -------------------------------------------------------
+    With ws.Rows(headerRow)
+        .Font.Bold = True
+        .Interior.Color = RGB(68, 84, 106)
+        .Font.Color = RGB(255, 255, 255)
+        .RowHeight = 20
+    End With
+
+    ' -------------------------------------------------------
+    ' STEP 15: Apply Printed column colours, then MIRROR to Job# column
+    '
+    '   Printed value  | Colour
+    '   ---------------|----------------------------
+    '   "Printed"      | Pink   RGB(255,153,204)
+    '   "N/A"          | Blue   RGB(0,176,240)
+    '   "In Progress"  | Orange RGB(255,165,0)
+    '   (empty)        | No fill
+    '
+    '   Job# cell gets the EXACT same fill as its row's Printed cell.
+    '   If Printed is empty, Job# gets no fill either.
+    ' -------------------------------------------------------
+    If printedCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            Dim pCell As Range
+            Dim jCell As Range
+            Set pCell = ws.Cells(i, printedCol)
+            Set jCell = ws.Cells(i, jNumCol)
+
+            Dim pVal As String
+            pVal = Trim(CStr(pCell.Value))
+
+            Select Case LCase(pVal)
+                Case "printed"
+                    ' Pink
+                    pCell.Interior.Color = RGB(255, 153, 204)
+                    pCell.Font.Color = RGB(0, 0, 0)
+                    jCell.Interior.Color = RGB(255, 153, 204)
+                    jCell.Font.Color = RGB(0, 0, 0)
+
+                Case "n/a"
+                    ' Blue
+                    pCell.Interior.Color = RGB(0, 176, 240)
+                    pCell.Font.Color = RGB(255, 255, 255)
+                    jCell.Interior.Color = RGB(0, 176, 240)
+                    jCell.Font.Color = RGB(255, 255, 255)
+
+                Case "in progress"
+                    ' Orange
+                    pCell.Interior.Color = RGB(255, 165, 0)
+                    pCell.Font.Color = RGB(0, 0, 0)
+                    jCell.Interior.Color = RGB(255, 165, 0)
+                    jCell.Font.Color = RGB(0, 0, 0)
+
+                Case "wait/hold"
+                    ' Muted khaki/grey - mirrors to Job# (same as Printed/N/A/In Progress)
+                    pCell.Interior.Color = RGB(196, 189, 151)
+                    pCell.Font.Color = RGB(0, 0, 0)
+                    jCell.Interior.Color = RGB(196, 189, 151)
+                    jCell.Font.Color = RGB(0, 0, 0)
+
+                Case "sidequests"
+                    ' Black background / white text - mirrors to Name column
+                    ' (these rows normally have no Job#, so Job# is only
+                    ' coloured if it actually has a value)
+                    pCell.Interior.Color = RGB(0, 0, 0)
+                    pCell.Font.Color = RGB(255, 255, 255)
+                    If nameCol > 0 Then
+                        ws.Cells(i, nameCol).Interior.Color = RGB(0, 0, 0)
+                        ws.Cells(i, nameCol).Font.Color = RGB(255, 255, 255)
+                    End If
+                    If jNumCol > 0 Then
+                        If Trim(CStr(jCell.Value)) <> "" Then
+                            jCell.Interior.Color = RGB(0, 0, 0)
+                            jCell.Font.Color = RGB(255, 255, 255)
+                        End If
+                    End If
+
+                Case Else
+                    ' No fill for both
+                    pCell.Interior.ColorIndex = xlNone
+                    pCell.Font.Color = RGB(0, 0, 0)
+                    jCell.Interior.ColorIndex = xlNone
+                    jCell.Font.Color = RGB(0, 0, 0)
+            End Select
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 15b: Highlight Name column by REAL due date
+    '           Due Date = TODAY or EARLIER (overdue) -> Green
+    '           Due Date = next working day           -> Yellow
+    '           (Saturday/Sunday are skipped when working out
+    '           "next working day" - so on a Friday, that means
+    '           the following Monday.)
+    '           Skipped for SideQuests rows, which keep their
+    '           black/white styling from Step 15 above.
+    ' -------------------------------------------------------
+    If nameCol > 0 Then
+        Dim todayDate As Date
+        Dim nextWorkDate As Date
+        todayDate = Date
+        nextWorkDate = todayDate + 1
+        Do While Weekday(nextWorkDate) = vbSaturday Or Weekday(nextWorkDate) = vbSunday
+            nextWorkDate = nextWorkDate + 1
+        Loop
+
+        For i = headerRow + 1 To lastRow
+            If (i - headerRow) <= UBound(dueDateVal) Then
+                If IsDate(dueDateVal(i - headerRow)) Then
+                    Dim rowDueDate As Date
+                    rowDueDate = CDate(dueDateVal(i - headerRow))
+
+                    Dim printedValCheck As String
+                    printedValCheck = ""
+                    If printedCol > 0 Then printedValCheck = LCase(Trim(CStr(ws.Cells(i, printedCol).Value)))
+
+                    If printedValCheck <> "sidequests" Then
+                        If Int(rowDueDate) <= Int(todayDate) Then
+                            ws.Cells(i, nameCol).Interior.Color = RGB(0, 176, 80) ' Green (today or overdue)
+                            ws.Cells(i, nameCol).Font.Color = RGB(0, 0, 0)
+                        ElseIf Int(rowDueDate) = Int(nextWorkDate) Then
+                            ws.Cells(i, nameCol).Interior.Color = RGB(255, 255, 0) ' Yellow
+                            ws.Cells(i, nameCol).Font.Color = RGB(0, 0, 0)
+                        End If
+                    End If
+                End If
+            End If
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 15c: If Name column contains "Batch", highlight the
+    '           ENTIRE row yellow (overrides any other colour
+    '           applied above for that row).
+    ' -------------------------------------------------------
+    If nameCol > 0 Then
+        For i = headerRow + 1 To lastRow
+            If InStr(1, LCase(CStr(ws.Cells(i, nameCol).Value)), "batch") > 0 Then
+                Dim batchCol As Long
+                For batchCol = 1 To lastCol
+                    ws.Cells(i, batchCol).Interior.Color = RGB(255, 255, 0)
+                    ws.Cells(i, batchCol).Font.Color = RGB(0, 0, 0)
+                Next batchCol
+            End If
+        Next i
+    End If
+
+    ' -------------------------------------------------------
+    ' STEP 16: Row height - compact 18pt for all data rows
+    ' -------------------------------------------------------
+    For i = headerRow + 1 To lastRow
+        ws.Rows(i).RowHeight = 18
+    Next i
+
+    ' -------------------------------------------------------
+    ' STEP 17b: Apply ALL BORDERS - done last so nothing overwrites them
+    '           Uses explicit border sides to guarantee every cell edge is drawn
+    ' -------------------------------------------------------
+    Dim finalLastRow As Long
+    Dim finalLastCol As Long
+    finalLastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    finalLastCol = ws.Cells(headerRow, ws.Columns.Count).End(xlToLeft).Column
+
+    Dim dataRange As Range
+    Set dataRange = ws.Range(ws.Cells(headerRow, 1), ws.Cells(finalLastRow, finalLastCol))
+
+    Dim borderSides(1 To 4) As Long
+    borderSides(1) = xlEdgeLeft
+    borderSides(2) = xlEdgeRight
+    borderSides(3) = xlEdgeTop
+    borderSides(4) = xlEdgeBottom
+
+    Dim bIdx As Integer
+    For bIdx = 1 To 4
+        With dataRange.Borders(borderSides(bIdx))
+            .LineStyle = xlContinuous
+            .Weight = xlThin
+            .Color = RGB(150, 150, 150)
+        End With
+    Next bIdx
+
+    With dataRange.Borders(xlInsideVertical)
+        .LineStyle = xlContinuous
+        .Weight = xlThin
+        .Color = RGB(150, 150, 150)
+    End With
+
+    With dataRange.Borders(xlInsideHorizontal)
+        .LineStyle = xlContinuous
+        .Weight = xlThin
+        .Color = RGB(150, 150, 150)
+    End With
+
+    ' -------------------------------------------------------
+    ' STEP 17: Freeze top row (header)
+    ' -------------------------------------------------------
+    ws.Activate
+    ActiveWindow.FreezePanes = False
+    ws.Cells(headerRow + 1, 1).Select
+    ActiveWindow.FreezePanes = True
+
+    ' -------------------------------------------------------
+    ' STEP 18: Lock in the print settings (landscape, Letter,
+    '          fit to one page) and select the FULL printable
+    '          area - including the "Friday 3rd July" date row
+    '          above the header - so it's ready to print.
+    '          See the ApplyPrintSettings sub below for details.
+    ' -------------------------------------------------------
+    Call ApplyPrintSettings(ws, finalLastRow, finalLastCol)
+
+    ' -------------------------------------------------------
+    ' DONE
+    ' -------------------------------------------------------
+    MsgBox "Done! Tasks board has been reformatted successfully." & Chr(10) & Chr(10) & _
+           "Changes made:" & Chr(10) & _
+           " - Removed unwanted columns" & Chr(10) & _
+           " - Renamed J Num to Job#" & Chr(10) & _
+           " - Moved Job# before Name" & Chr(10) & _
+           " - Stripped leading J and zeros from Job# (J16477 -> 16477)" & Chr(10) & _
+           " - Converted Day to shorthand (Mon/Tue etc)" & Chr(10) & _
+           " - Applied all borders" & Chr(10) & _
+           " - Set column widths" & Chr(10) & _
+           " - Job# colour now mirrors Printed column colour" & Chr(10) & _
+           " - SideQuests rows: black/white now also applied to Name" & Chr(10) & _
+           " - WAIT/HOLD colour now mirrors to Job#" & Chr(10) & _
+           " - Batch rows highlighted yellow across the row" & Chr(10) & _
+           " - Name highlighted green (due today) / yellow (due tomorrow)" & Chr(10) & _
+           " - Froze header row", vbInformation, "Yungatha Tasks Board Formatter"
+
+End Sub
+
+'=============================================================
+' ApplyPrintSettings
+' Locks in the print setup so the sheet is always ready to print
+' with nothing left to touch except which printer to use.
+' Mirrors: Landscape, Letter, Fit Sheet on One Page, 0cm margins.
+'
+' Selects the full printable range STARTING AT ROW 2 (the
+' "Friday 3rd July" date row) - skipping the blank spacer row 1
+' - down through the last task row, the same as dragging over
+' it with your mouse. This is what lets Excel's Print pane
+' offer "Print Selection" with that exact range in the preview.
+'
+' NOTE: Whether "Print Selection" / a custom margin label is
+' the DEFAULT shown in those dropdowns (vs "Print Active
+' Sheets" / "Normal Margins") is a sticky per-file UI
+' preference Excel remembers once you've manually picked it -
+' there's no VBA property to force the dropdown text itself.
+' The actual values (the selected range, the 0cm margins) ARE
+' being set correctly below regardless of what label Excel
+' chooses to display.
+'=============================================================
+Sub ApplyPrintSettings(ws As Worksheet, lastRow As Long, lastCol As Long)
+
+    Const MARGIN_TOP_CM As Double = 0
+    Const MARGIN_BOTTOM_CM As Double = 0
+    Const MARGIN_LEFT_CM As Double = 2
+    Const MARGIN_RIGHT_CM As Double = 0
+    Const CM_TO_POINTS As Double = 28.3465
+
+    With ws.PageSetup
+        .Orientation = xlLandscape
+        .PaperSize = xlPaperLetter
+
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = 1
+
+        .TopMargin = MARGIN_TOP_CM * CM_TO_POINTS
+        .BottomMargin = MARGIN_BOTTOM_CM * CM_TO_POINTS
+        .LeftMargin = MARGIN_LEFT_CM * CM_TO_POINTS
+        .RightMargin = MARGIN_RIGHT_CM * CM_TO_POINTS
+        .HeaderMargin = 0
+        .FooterMargin = 0
+
+        .CenterHorizontally = False
+        .CenterVertically = False
+
+        ' Clear any fixed Print Area so it doesn't override Print Selection
+        .PrintArea = ""
+    End With
+
+    ' Also remove any leftover "Print_Area" defined name directly,
+    ' in case one is still hanging around from a previous save
+    On Error Resume Next
+    ws.Parent.Names(ws.Name & "!Print_Area").Delete
+    On Error GoTo 0
+
+    ' Select the range STARTING AT ROW 2 (the date row), skipping
+    ' the blank spacer row 1, down to the last task row
+    ws.Activate
+    ws.Range(ws.Cells(2, 1), ws.Cells(lastRow, lastCol)).Select
+
+End Sub
+
+
